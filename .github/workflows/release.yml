@@ -1,0 +1,49 @@
+# Push a tag like v0.1.0 to build the game and the launcher and publish them
+# as a GitHub release. Launchers download Multiverse-FC-windows.zip from it.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  GODOT_VERSION: 4.7.2
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Godot and export templates
+        run: |
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
+          curl -sSfL -o godot.zip "$base/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          unzip -q godot.zip
+          mv "Godot_v${GODOT_VERSION}-stable_linux.x86_64" "$RUNNER_TEMP/godot"
+          curl -sSfL -o templates.tpz "$base/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          unzip -q templates.tpz
+          mkdir -p "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          mv templates/* "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable/"
+          rm -rf godot.zip templates.tpz templates
+
+      - name: Check the game logic
+        run: |
+          "$RUNNER_TEMP/godot" --headless --path . --import
+          "$RUNNER_TEMP/godot" --headless --path . -s tools/test_save.gd | tee test.log
+          grep -q "same after 60 more weeks: true" test.log
+          grep -q "meta reload ok: true" test.log
+
+      - name: Build
+        run: GODOT="$RUNNER_TEMP/godot" tools/build.sh "$GITHUB_REF_NAME"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            build/Multiverse-FC-windows.zip build/Multiverse-FC-Launcher.exe \
+            --title "Multiverse FC $GITHUB_REF_NAME" --notes-file .github/release-notes.md
